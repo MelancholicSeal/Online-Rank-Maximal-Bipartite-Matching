@@ -120,40 +120,52 @@ void generate_random_bipartite_graph(int n, double p, unsigned int graph_seed) {
 	
 }
 
-void random_block_bipartite_graph(int n, int k, double p) {
-	if (n % k != 0) {
-        throw invalid_argument("Το n πρέπει να διαιρείται ακριβώς από το k!");
-    }
+void worst_ranking_family(int n){
     adj.assign(2 * n + 1, vector<int>(2 * n + 1, 0));
-     
-    int B = n / k; 
-
-    random_device rd;
-    mt19937 gen(rd());
-    uniform_real_distribution<double> dis(0.0, 1.0);
-
-    for (int u = 1; u <= n; u++) {
-        int u_block = (u - 1) / B + 1; 
-        int max_v = u_block * B; 
-
-        for (int v = 1; v <= max_v; v++) {
-            if (dis(gen) < p) { 
+	adj_list.assign(2 * n + 1, vector<int>());
+     for (int u = 1; u <= n; u++) {
+        for (int v = 1; v <= n; v++) {
+            if(u==v || (u>n/3 && u<=n/3*2 && v<=n/3) || (u>n/3*2 && v>n/3 && v<=n/3*2)){
                 adj[u][v + n] = 1;
-                adj[v + n][u] = 1; 
+                adj[v + n][u] = 1;
+                
+                adj_list[u].push_back(v + n);
+				adj_list[v + n].push_back(u);
             }
         }
     }
 }
 
+pair<double, double> calculate_clt_margin(const vector<double>& samples) {
+    size_t N = samples.size();
+    if (N < 30) return {0.0, 0.0};
+
+    double sum = accumulate(samples.begin(), samples.end(), 0.0);
+    double mean = sum / N;
+
+    double variance_sum = 0.0;
+    for (double val : samples) {
+        variance_sum += (val - mean) * (val - mean);
+    }
+    double variance = variance_sum / (N - 1);
+    double std_dev = sqrt(variance);
+    double std_error = std_dev / sqrt(N);
+
+    double z_value = 1.96; // 95% Confidence Level
+    double margin_of_error = z_value * std_error;
+
+    return {mean, margin_of_error};
+}
+
 int main() {
     // n: πλήθος κορυφών σε κάθε πλευρά
-    int n = 100; 
+    int n = 200; 
 	cin >> n;
     // runs: πλήθος διαφορετικών γραφημάτων
 	int runs = 1000;
 	random_device rd; 
 	mt19937 p_gen(rd()); 
-	uniform_real_distribution<double> p_dist(0.0, 1.0/n);
+	uniform_real_distribution<double> p_dist(0.0, 5.0/n);
 
 	double valworst = 1;
 	pair<double, unsigned int> worst_found = {-1, -1};
@@ -166,7 +178,7 @@ int main() {
 		
 		generate_random_bipartite_graph(n, p, random_graph_seed);
 		//read_graph(n,m);
-		//random_block_bipartite_graph(n, 0.01);
+		//worst_ranking_family(n);
 		
 		vector<int> ordl, y, s;
 		for (int i = 1; i <= n; i++) {
@@ -178,8 +190,11 @@ int main() {
 		double tot_r = 0;
 		int iterations = 1000;
 		
-		
+		vector<double> current_graph_samples;
 		mt19937 g(rd());
+
+        // Υπολογισμός του μέγιστου offline rank-1 ταιριάσματος
+        double opt1 = bipart(n);
 
 		// Εκτέλεση προσομοιώσεων με διαφορετικές τυχαίες μεταθέσεις
 		for (int i = 0; i < iterations; i++) {
@@ -188,10 +203,27 @@ int main() {
 			shuffle(s.begin(), s.end(), g);       // Tυχαία μετάθεση fallback s
 			
 			tot_r += online_rank_maximal(ordl, y, s);
+            double r_exec = tot_r;
+            current_graph_samples.push_back(r_exec / opt1);
 		}
 
-		double opt1 = bipart(n); // Υπολογισμός του μέγιστου offline rank-1 ταιριάσματος
 		
+        
+        // Υπολογισμός μέσου όρου και σφάλματος CLT για ΤΟ ΣΥΓΚΕΚΡΙΜΕΝΟ γράφημα
+        pair<double, double> clt_stats = calculate_clt_margin(current_graph_samples);
+        double avg_ratio = clt_stats.first;
+        double margin = clt_stats.second;
+
+        // Έλεγχος αν το σχετικό σφάλμα είναι κάτω από 5% (στατιστικά σημαντικό)
+        double relative_error = (avg_ratio > 0) ? (margin / avg_ratio) * 100.0 : 0.0;
+        if (relative_error >= 5.0) {
+            cout << fixed << setprecision(5);
+            cout << "[WARNING] Graph " << i << " (Seed: " << random_graph_seed << ", p: " << p 
+                 << ") is NOT statistically significant! Margin: ±" << margin 
+                 << " (" << relative_error << "% error)\n";
+        }
+
+
 		double avg_r = tot_r / iterations;
 		double empirical_ratio = (opt1 > 0) ? (avg_r / opt1) : 0.0;
 		
